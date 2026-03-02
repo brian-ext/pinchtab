@@ -1,11 +1,6 @@
 package bridge
 
 import (
-	"context"
-	"log/slog"
-	"time"
-
-	"github.com/chromedp/cdproto/systeminfo"
 	"github.com/chromedp/chromedp"
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -42,61 +37,17 @@ func (b *Bridge) GetBrowserMemoryMetrics() (*MemoryMetrics, error) {
 }
 
 // GetAggregatedMemoryMetrics returns real OS memory usage across all Chrome processes
-// Uses hybrid approach: CDP for process IDs, gopsutil for actual memory
+// Uses process tree approach: walks the browser process and its children
 func (b *Bridge) GetAggregatedMemoryMetrics() (*MemoryMetrics, error) {
 	if b.BrowserCtx == nil {
 		return nil, nil
 	}
 
-	result := &MemoryMetrics{}
-
-	// Try SystemInfo.getProcessInfo first (browser-level, non-intrusive)
-	procInfo, err := b.getProcessInfo()
-	if err != nil {
-		slog.Debug("SystemInfo.getProcessInfo failed, using fallback", "err", err)
-		return b.getMemoryViaProcessTree()
-	}
-
-	var totalMem uint64
-	rendererCount := 0
-
-	for _, p := range procInfo {
-		if p.Type == "renderer" || p.Type == "tab" {
-			mem, err := getProcessMemory(int32(p.ID))
-			if err != nil {
-				slog.Debug("failed to get process memory", "pid", p.ID, "err", err)
-				continue
-			}
-			totalMem += mem
-			rendererCount++
-		}
-	}
-
-	result.MemoryMB = float64(totalMem) / (1024 * 1024)
-	result.Renderers = rendererCount
-
-	// Estimate JS heap as ~40% of total memory (rough heuristic)
-	result.JSHeapUsedMB = result.MemoryMB * 0.4
-	result.JSHeapTotalMB = result.MemoryMB * 0.5
-
-	return result, nil
+	// Always use process tree approach - it's more reliable for isolating this instance
+	return b.getMemoryViaProcessTree()
 }
 
-// getProcessInfo calls SystemInfo.getProcessInfo via CDP
-func (b *Bridge) getProcessInfo() ([]*systeminfo.ProcessInfo, error) {
-	ctx, cancel := context.WithTimeout(b.BrowserCtx, 5*time.Second)
-	defer cancel()
 
-	var procInfo []*systeminfo.ProcessInfo
-	err := chromedp.Run(ctx,
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			var err error
-			procInfo, err = systeminfo.GetProcessInfo().Do(ctx)
-			return err
-		}),
-	)
-	return procInfo, err
-}
 
 // getMemoryViaProcessTree is a fallback that walks the browser process tree
 func (b *Bridge) getMemoryViaProcessTree() (*MemoryMetrics, error) {
