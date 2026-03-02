@@ -71,6 +71,28 @@ const defaultSettings: Settings = {
   monitoring: { memoryMetrics: false },
 };
 
+const SETTINGS_KEY = "pinchtab_settings";
+
+function loadSettings(): Settings {
+  try {
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    if (saved) {
+      return { ...defaultSettings, ...JSON.parse(saved) };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return defaultSettings;
+}
+
+function saveSettings(settings: Settings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export const useAppStore = create<AppState>((set) => ({
   // Profiles
   profiles: [],
@@ -114,9 +136,12 @@ export const useAppStore = create<AppState>((set) => ({
   setEventFilter: (eventFilter) => set({ eventFilter }),
   clearEvents: () => set({ events: [] }),
 
-  // Settings
-  settings: defaultSettings,
-  setSettings: (settings) => set({ settings }),
+  // Settings (persisted to localStorage)
+  settings: loadSettings(),
+  setSettings: (settings) => {
+    saveSettings(settings);
+    set({ settings });
+  },
 
   // Server info
   serverInfo: null,
