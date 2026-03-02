@@ -7,11 +7,16 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { TabDataPoint, MemoryDataPoint } from "../../stores/useAppStore";
+import type {
+  TabDataPoint,
+  MemoryDataPoint,
+  ServerDataPoint,
+} from "../../stores/useAppStore";
 
 interface Props {
   data: TabDataPoint[];
   memoryData?: MemoryDataPoint[];
+  serverData?: ServerDataPoint[];
   instances: { id: string; profileName: string }[];
   selectedInstanceId: string | null;
   onSelectInstance: (id: string) => void;
@@ -39,6 +44,7 @@ function formatTime(timestamp: number): string {
 export default function TabsChart({
   data,
   memoryData,
+  serverData,
   instances,
   selectedInstanceId,
   onSelectInstance,
@@ -51,24 +57,35 @@ export default function TabsChart({
     return colors;
   }, [instances]);
 
-  // Merge tab and memory data by timestamp
+  // Merge tab, memory, and server data by timestamp
   const mergedData = useMemo(() => {
-    if (!memoryData || memoryData.length === 0) return data;
+    const memByTime = new Map((memoryData || []).map((m) => [m.timestamp, m]));
+    const serverByTime = new Map(
+      (serverData || []).map((s) => [s.timestamp, s]),
+    );
 
-    const memByTime = new Map(memoryData.map((m) => [m.timestamp, m]));
     return data.map((d) => {
-      const mem = memByTime.get(d.timestamp);
-      if (!mem) return d;
-      // Add memory keys with _mem suffix
       const merged: Record<string, number> = { ...d };
-      for (const [key, val] of Object.entries(mem)) {
-        if (key !== "timestamp") {
-          merged[`${key}_mem`] = val;
+
+      // Add memory keys with _mem suffix
+      const mem = memByTime.get(d.timestamp);
+      if (mem) {
+        for (const [key, val] of Object.entries(mem)) {
+          if (key !== "timestamp") {
+            merged[`${key}_mem`] = val;
+          }
         }
       }
+
+      // Add server metrics
+      const srv = serverByTime.get(d.timestamp);
+      if (srv) {
+        merged.goHeapMB = srv.goHeapMB;
+      }
+
       return merged;
     });
-  }, [data, memoryData]);
+  }, [data, memoryData, serverData]);
 
   if (data.length === 0 || instances.length === 0) {
     return (
@@ -79,13 +96,19 @@ export default function TabsChart({
   }
 
   const hasMemory = memoryData && memoryData.length > 0;
+  const hasServer = serverData && serverData.length > 0;
 
   return (
     <div className="rounded-lg border border-border-subtle bg-bg-surface">
       <ResponsiveContainer width="100%" height={200}>
         <LineChart
           data={mergedData}
-          margin={{ top: 16, right: hasMemory ? 50 : 16, bottom: 8, left: 8 }}
+          margin={{
+            top: 16,
+            right: hasMemory || hasServer ? 50 : 16,
+            bottom: 8,
+            left: 8,
+          }}
         >
           <XAxis
             dataKey="timestamp"
@@ -105,7 +128,7 @@ export default function TabsChart({
             axisLine={false}
             width={30}
           />
-          {hasMemory && (
+          {(hasMemory || hasServer) && (
             <YAxis
               yAxisId="memory"
               orientation="right"
@@ -128,10 +151,12 @@ export default function TabsChart({
             }}
             labelFormatter={(label) => formatTime(label as number)}
             formatter={(value, name) => {
-              const isMemory = String(name).endsWith("_mem");
-              const instId = isMemory
-                ? String(name).replace("_mem", "")
-                : String(name);
+              const nameStr = String(name);
+              if (nameStr === "goHeapMB") {
+                return [`${value}MB`, "Server Heap"];
+              }
+              const isMemory = nameStr.endsWith("_mem");
+              const instId = isMemory ? nameStr.replace("_mem", "") : nameStr;
               const inst = instances.find((i) => i.id === instId);
               const label = inst?.profileName || instId;
               return [
@@ -181,6 +206,19 @@ export default function TabsChart({
                 dot={false}
               />
             ))}
+          {/* Server heap line (dotted, gray) */}
+          {hasServer && (
+            <Line
+              yAxisId="memory"
+              type="monotone"
+              dataKey="goHeapMB"
+              name="goHeapMB"
+              stroke="#888"
+              strokeWidth={1.5}
+              strokeDasharray="2 2"
+              dot={false}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

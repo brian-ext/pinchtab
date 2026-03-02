@@ -75,6 +75,17 @@ export async function fetchAllMetrics(): Promise<InstanceMetrics[]> {
   return request<InstanceMetrics[]>("/instances/metrics");
 }
 
+export interface ServerMetrics {
+  goHeapAllocMB: number;
+  goNumGoroutine: number;
+  rateBucketHosts: number;
+}
+
+export async function fetchServerMetrics(): Promise<ServerMetrics> {
+  const res = await request<{ metrics: ServerMetrics }>("/metrics");
+  return res.metrics;
+}
+
 // Agents — endpoint is /api/agents (dashboard API)
 export async function fetchAgents(): Promise<Agent[]> {
   return request<Agent[]>("/api/agents");

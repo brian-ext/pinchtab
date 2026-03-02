@@ -14,10 +14,12 @@ export default function MonitoringPage() {
     setInstancesLoading,
     tabsChartData,
     memoryChartData,
+    serverChartData,
     currentTabs,
     currentMemory,
     addChartDataPoint,
     addMemoryDataPoint,
+    addServerDataPoint,
     setCurrentTabs,
     setCurrentMemory,
     settings,
@@ -48,9 +50,10 @@ export default function MonitoringPage() {
 
     try {
       // Fetch tabs always, metrics only if enabled
-      const [allTabs, allMetrics] = await Promise.all([
+      const [allTabs, allMetrics, serverMetrics] = await Promise.all([
         api.fetchAllTabs().catch(() => []),
         memoryEnabled ? api.fetchAllMetrics().catch(() => []) : [],
+        api.fetchServerMetrics().catch(() => null),
       ]);
 
       const tabsArray = Array.isArray(allTabs) ? allTabs : [];
@@ -86,6 +89,14 @@ export default function MonitoringPage() {
           memDataPoint as Parameters<typeof addMemoryDataPoint>[0],
         );
       }
+      if (serverMetrics) {
+        addServerDataPoint({
+          timestamp,
+          goHeapMB: serverMetrics.goHeapAllocMB,
+          goroutines: serverMetrics.goNumGoroutine,
+          rateBucketHosts: serverMetrics.rateBucketHosts,
+        });
+      }
       setCurrentTabs(tabsByInstance);
       setCurrentMemory(memoryByInstance);
     } catch (e) {
@@ -96,6 +107,7 @@ export default function MonitoringPage() {
     memoryEnabled,
     addChartDataPoint,
     addMemoryDataPoint,
+    addServerDataPoint,
     setCurrentTabs,
     setCurrentMemory,
   ]);
@@ -151,6 +163,7 @@ export default function MonitoringPage() {
       <TabsChart
         data={tabsChartData}
         memoryData={memoryEnabled ? memoryChartData : undefined}
+        serverData={serverChartData}
         instances={runningInstances.map((i) => ({
           id: i.id,
           profileName: i.profileName,

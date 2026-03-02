@@ -19,6 +19,13 @@ export interface MemoryDataPoint {
   [instanceId: string]: number; // jsHeapUsedMB
 }
 
+export interface ServerDataPoint {
+  timestamp: number;
+  goHeapMB: number;
+  goroutines: number;
+  rateBucketHosts: number;
+}
+
 interface AppState {
   // Profiles
   profiles: Profile[];
@@ -35,10 +42,12 @@ interface AppState {
   // Chart data (persists across navigation)
   tabsChartData: TabDataPoint[];
   memoryChartData: MemoryDataPoint[];
+  serverChartData: ServerDataPoint[];
   currentTabs: Record<string, InstanceTab[]>;
   currentMemory: Record<string, number>; // instanceId -> jsHeapUsedMB
   addChartDataPoint: (point: TabDataPoint) => void;
   addMemoryDataPoint: (point: MemoryDataPoint) => void;
+  addServerDataPoint: (point: ServerDataPoint) => void;
   setCurrentTabs: (tabs: Record<string, InstanceTab[]>) => void;
   setCurrentMemory: (memory: Record<string, number>) => void;
 
@@ -109,6 +118,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Chart data
   tabsChartData: [],
   memoryChartData: [],
+  serverChartData: [],
   currentTabs: {},
   currentMemory: {},
   addChartDataPoint: (point) =>
@@ -118,6 +128,10 @@ export const useAppStore = create<AppState>((set) => ({
   addMemoryDataPoint: (point) =>
     set((state) => ({
       memoryChartData: [...state.memoryChartData.slice(-59), point], // Keep last 60 points
+    })),
+  addServerDataPoint: (point) =>
+    set((state) => ({
+      serverChartData: [...state.serverChartData.slice(-59), point], // Keep last 60 points
     })),
   setCurrentTabs: (currentTabs) => set({ currentTabs }),
   setCurrentMemory: (currentMemory) => set({ currentMemory }),
