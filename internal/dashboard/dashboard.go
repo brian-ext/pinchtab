@@ -61,6 +61,8 @@ type Dashboard struct {
 	sysConns       map[chan SystemEvent]struct{}
 	cancel         context.CancelFunc
 	instances      InstanceLister
+	monitoring     MonitoringSource
+	serverMetrics  ServerMetricsProvider
 	childAuthToken string
 	mu             sync.RWMutex
 }
@@ -134,7 +136,8 @@ func (d *Dashboard) RegisterHandlers(mux *http.ServeMux) {
 	mux.Handle("GET /dashboard/assets/", http.StripPrefix("/dashboard", d.withLongCache(fileServer)))
 	mux.Handle("GET /dashboard/favicon.png", http.StripPrefix("/dashboard", d.withLongCache(fileServer)))
 
-	// SPA: serve dashboard.html for /dashboard
+	// SPA: serve dashboard.html for / and /dashboard
+	mux.Handle("GET /{$}", d.withNoCache(http.HandlerFunc(d.handleDashboardUI)))
 	mux.Handle("GET /dashboard", d.withNoCache(http.HandlerFunc(d.handleDashboardUI)))
 	mux.Handle("GET /dashboard/", d.withNoCache(http.HandlerFunc(d.handleDashboardUI)))
 }
@@ -146,9 +149,18 @@ func (d *Dashboard) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SSE connections are intentionally long-lived. Clear the server-level write
+	// deadline for this response so the stream is not terminated after
+	// http.Server.WriteTimeout elapses.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		http.Error(w, "streaming deadline unsupported", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	agentCh := make(chan AgentEvent, d.cfg.SSEBufferSize)
 	sysCh := make(chan SystemEvent, d.cfg.SSEBufferSize)
@@ -164,13 +176,23 @@ func (d *Dashboard) handleSSE(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 	}()
 
+	includeMemory := r.URL.Query().Get("memory") == "1"
+
 	// Send initial empty agent list
 	data, _ := json.Marshal([]interface{}{})
 	_, _ = fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
 	flusher.Flush()
 
+	if d.monitoring != nil || d.instances != nil {
+		data, _ = json.Marshal(d.monitoringSnapshot(includeMemory))
+		_, _ = fmt.Fprintf(w, "event: monitoring\ndata: %s\n\n", data)
+		flusher.Flush()
+	}
+
 	keepalive := time.NewTicker(30 * time.Second)
+	monitoring := time.NewTicker(5 * time.Second)
 	defer keepalive.Stop()
+	defer monitoring.Stop()
 
 	for {
 		select {
@@ -182,6 +204,17 @@ func (d *Dashboard) handleSSE(w http.ResponseWriter, r *http.Request) {
 			data, _ := json.Marshal(evt)
 			_, _ = fmt.Fprintf(w, "event: system\ndata: %s\n\n", data)
 			flusher.Flush()
+			if d.monitoring != nil || d.instances != nil {
+				data, _ = json.Marshal(d.monitoringSnapshot(includeMemory))
+				_, _ = fmt.Fprintf(w, "event: monitoring\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
+		case <-monitoring.C:
+			if d.monitoring != nil || d.instances != nil {
+				data, _ = json.Marshal(d.monitoringSnapshot(includeMemory))
+				_, _ = fmt.Fprintf(w, "event: monitoring\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
 		case <-keepalive.C:
 			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()

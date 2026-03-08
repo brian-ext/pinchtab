@@ -36,6 +36,7 @@ func runDashboard(cfg *config.RuntimeConfig) {
 	if dashPort == "" {
 		dashPort = "9870"
 	}
+	startedAt := time.Now()
 
 	slog.Info("🦀 PinchTab", "port", dashPort)
 
@@ -51,6 +52,16 @@ func runDashboard(cfg *config.RuntimeConfig) {
 	orch.ApplyRuntimeConfig(cfg)
 	orch.SetProfileManager(profMgr)
 	dash.SetInstanceLister(orch)
+	dash.SetMonitoringSource(orch)
+	dash.SetServerMetricsProvider(func() dashboard.MonitoringServerMetrics {
+		snapshot := handlers.SnapshotMetrics()
+		return dashboard.MonitoringServerMetrics{
+			GoHeapAllocMB:   metricFloat(snapshot["goHeapAllocMB"]),
+			GoNumGoroutine:  metricInt(snapshot["goNumGoroutine"]),
+			RateBucketHosts: metricInt(snapshot["rateBucketHosts"]),
+		}
+	})
+	configAPI := dashboard.NewConfigAPI(cfg, orch, profMgr, orch, version, startedAt)
 
 	// Wire up instance events to SSE broadcast
 	orch.OnEvent(func(evt orchestrator.InstanceEvent) {
@@ -63,6 +74,7 @@ func runDashboard(cfg *config.RuntimeConfig) {
 	mux := http.NewServeMux()
 
 	dash.RegisterHandlers(mux)
+	configAPI.RegisterHandlers(mux)
 	profMgr.RegisterHandlers(mux)
 
 	// Strategy-based routing: if a known strategy is configured, let it handle
@@ -124,19 +136,7 @@ func runDashboard(cfg *config.RuntimeConfig) {
 		slog.Info("scheduler enabled", "strategy", schedCfg.Strategy, "workers", schedCfg.WorkerCount)
 	}
 
-	// Root returns health check (API-first design)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, 200, map[string]any{
-			"status":    "ok",
-			"mode":      "dashboard",
-			"dashboard": "/dashboard",
-			"docs":      "/api/docs",
-		})
-	})
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, 200, map[string]string{"status": "ok", "mode": "dashboard"})
-	})
+	mux.HandleFunc("GET /health", configAPI.HandleHealth)
 
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		web.JSON(w, 200, map[string]any{"metrics": handlers.SnapshotMetrics()})
@@ -327,5 +327,37 @@ func registerDefaultProxyRoutes(mux *http.ServeMux, orch *orchestrator.Orchestra
 			path := r.URL.Path
 			proxy.HTTP(w, r, target+path)
 		})
+	}
+}
+
+func metricFloat(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	default:
+		return 0
+	}
+}
+
+func metricInt(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case uint64:
+		return int(v)
+	default:
+		return 0
 	}
 }
